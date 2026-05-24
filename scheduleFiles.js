@@ -360,11 +360,46 @@ async function main() {
 }
 
 /**
+ * Pulisce una risposta stringa dell'AI per garantire che contenga solo JSON valido,
+ * rimuovendo eventuali tag markdown (come ```json ... ```) restituiti dai modelli.
+ * @param {string} rawText - La risposta grezza ricevuta dall'AI.
+ * @returns {string} - Testo JSON ripulito pronto per essere parsato.
+ */
+function cleanJsonResponse(rawText) {
+    let cleanText = rawText.trim();
+    if (cleanText.startsWith('```')) {
+        const matches = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (matches && matches[1]) {
+            cleanText = matches[1].trim();
+        }
+    }
+    return cleanText;
+}
+
+/**
  * Gestisce l'elaborazione del singolo file o directory (con AI o ordinamento standard).
  * @param {string} file - Il nome del file o directory.
  * @param {import('fs').Stats} dataFile - Metadati del file.
  */
 async function handleFile(file, dataFile) {
+    // Evita di spostare o alterare file di sistema, file nascosti, lo script stesso o file del repository
+    const IGNORED_SYSTEM_FILES = [
+        'schedulefiles.js', 
+        '.env', 
+        '.env.example', 
+        '.gitignore', 
+        '.git', 
+        'proposte_funzionalita.md',
+        'indice_documenti.txt',
+        'task.md',
+        'implementation_plan.md',
+        'walkthrough.md'
+    ];
+    
+    if (IGNORED_SYSTEM_FILES.includes(file.toLowerCase()) || file.startsWith('.')) {
+        return;
+    }
+
     const ext = path.extname(file);
     const basename = path.basename(file, ext);
     const sourcePath = path.join(basepath, file);
@@ -375,7 +410,7 @@ async function handleFile(file, dataFile) {
         try {
             console.log(`[AI] Analisi semantica in corso per "${file}"...`);
             const previewText = await extractText(sourcePath, dataFile, ext);
-
+            
             const prompt = `Elemento da analizzare:
 - Nome: "${file}"
 - Tipo: ${dataFile.isDirectory() ? 'Directory' : 'File'}
@@ -385,14 +420,22 @@ Anteprima contenuto / metadati:
 ---
 ${previewText}
 ---`;
-
+            
             const aiResponse = await callAI(prompt, SYSTEM_PROMPT);
-            const res = JSON.parse(aiResponse);
-
+            const cleanedResponse = cleanJsonResponse(aiResponse);
+            const res = JSON.parse(cleanedResponse);
+            
             // Risoluzione cartella e nome finale consigliati dall'AI
             const targetSubdir = res.destinationSubdir || (ext.startsWith('.') ? ext.slice(1) : 'Documenti');
             const extDir = path.join(destpath, targetSubdir);
-
+            
+            // Sicurezza: Prevenzione del Path Traversal
+            const resolvedDestPath = path.resolve(extDir);
+            const resolvedRootPath = path.resolve(destpath);
+            if (!resolvedDestPath.startsWith(resolvedRootPath)) {
+                throw new Error(`Rilevato tentativo di Path Traversal nel percorso suggerito dall'AI: "${targetSubdir}"`);
+            }
+            
             let finalName = file;
             if (res.classification === 'invoice' && res.suggestedName) {
                 let sug = res.suggestedName;
@@ -403,7 +446,7 @@ ${previewText}
             } else {
                 finalName = file.replace(/\s+/g, '');
             }
-
+            
             const finalPath = path.join(extDir, finalName);
             await fs.mkdir(extDir, { recursive: true });
 
@@ -413,30 +456,34 @@ ${previewText}
                 if (dataFile.isFile()) {
                     await deleteFile(sourcePath);
                 } else {
-                    // Gestione asincrona del merge delle directory
+                    // Gestione asincrona del merge delle directory con cattura errori
                     const dir = await fs.opendir(sourcePath);
-                    for await (const entry of dir) {
-                        const entrySourcePath = path.join(sourcePath, entry.name);
-                        const entryDestPath = path.join(finalPath, entry.name);
+                    try {
+                        for await (const entry of dir) {
+                            const entrySourcePath = path.join(sourcePath, entry.name);
+                            const entryDestPath = path.join(finalPath, entry.name);
 
-                        if (!(await exists(entryDestPath))) {
-                            await fs.rename(entrySourcePath, entryDestPath);
-                        } else {
-                            if (entry.isFile()) {
-                                await fs.unlink(entrySourcePath);
+                            if (!(await exists(entryDestPath))) {
+                                await fs.rename(entrySourcePath, entryDestPath);
                             } else {
-                                await fs.rm(entrySourcePath, { recursive: true, force: true });
+                                if (entry.isFile()) {
+                                    await fs.unlink(entrySourcePath);
+                                } else {
+                                    await fs.rm(entrySourcePath, { recursive: true, force: true });
+                                }
                             }
                         }
+                        await fs.rmdir(sourcePath);
+                    } catch (mergeErr) {
+                        console.warn(`\x1b[33m[WARN MERGE]\x1b[0m Errore durante il merge della cartella "${file}": ${mergeErr.message}`);
                     }
-                    await fs.rmdir(sourcePath);
                 }
             }
 
             // Scrittura catalogo centralizzato e file sidecar dei metadati
             await writeToIndex(file, finalPath, res.classification, res.summary, res.tags);
             await createSidecarMetadata(finalPath, res.summary, res.tags);
-
+            
             console.log(`\x1b[32m[AI OK]\x1b[0m "${file}" spostato e indicizzato in "${targetSubdir}" come "${finalName}".`);
             processedWithAI = true;
         } catch (err) {
@@ -450,7 +497,7 @@ ${previewText}
             case '.ini':
                 await deleteFile(sourcePath);
                 break;
-
+                
             default: {
                 const ctime = dataFile.ctime;
                 const day = String(ctime.getDate()).padStart(2, '0');
@@ -460,6 +507,14 @@ ${previewText}
 
                 const extname = ext.startsWith('.') ? ext.slice(1) : ext;
                 const extDir = path.join(destpath, extname);
+                
+                // Sicurezza: Prevenzione del Path Traversal
+                const resolvedDestPath = path.resolve(extDir);
+                const resolvedRootPath = path.resolve(destpath);
+                if (!resolvedDestPath.startsWith(resolvedRootPath)) {
+                    console.error(`\x1b[31m[ERRORE PERCORSO]\x1b[0m Tentativo di Path Traversal bloccato sull'estensione: "${extname}"`);
+                    break;
+                }
 
                 const cleanBasename = basename.replace(/\s+/g, '');
                 const formattedName = path.join(extDir, `${cleanBasename}_${timestampStr}${ext}`);
@@ -473,21 +528,25 @@ ${previewText}
                         await deleteFile(sourcePath);
                     } else {
                         const dir = await fs.opendir(sourcePath);
-                        for await (const entry of dir) {
-                            const entrySourcePath = path.join(sourcePath, entry.name);
-                            const entryDestPath = path.join(formattedName, entry.name);
+                        try {
+                            for await (const entry of dir) {
+                                const entrySourcePath = path.join(sourcePath, entry.name);
+                                const entryDestPath = path.join(formattedName, entry.name);
 
-                            if (!(await exists(entryDestPath))) {
-                                await fs.rename(entrySourcePath, entryDestPath);
-                            } else {
-                                if (entry.isFile()) {
-                                    await fs.unlink(entrySourcePath);
+                                if (!(await exists(entryDestPath))) {
+                                    await fs.rename(entrySourcePath, entryDestPath);
                                 } else {
-                                    await fs.rm(entrySourcePath, { recursive: true, force: true });
+                                    if (entry.isFile()) {
+                                        await fs.unlink(entrySourcePath);
+                                    } else {
+                                        await fs.rm(entrySourcePath, { recursive: true, force: true });
+                                    }
                                 }
                             }
+                            await fs.rmdir(sourcePath);
+                        } catch (mergeErr) {
+                            console.warn(`\x1b[33m[WARN MERGE]\x1b[0m Errore durante il merge standard della cartella "${file}": ${mergeErr.message}`);
                         }
-                        await fs.rmdir(sourcePath);
                     }
                 }
                 break;
