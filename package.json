@@ -1,7 +1,7 @@
 {
-  "name": "antigravity-file-organizer",
+  "name": "file-organizer",
   "version": "1.0.0",
-  "description": "AntiGravity File Organizer - Organizzazione intelligente, sicura e multimodale di file e directory.",
+  "description": "File Organizer - Organizzazione intelligente, sicura e multimodale di file e directory.",
   "main": "scheduleFiles.js",
   "bin": {
     "organizer": "./scheduleFiles.js",
@@ -22,6 +22,6 @@
     "dry-run",
     "deduplication"
   ],
-  "author": "AntiGravity team",
+  "author": "",
   "license": "MIT"
 }
