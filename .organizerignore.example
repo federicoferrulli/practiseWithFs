@@ -1,0 +1,27 @@
+# AntiGravity File Organizer - Esempio di Filtro di Esclusione (.organizerignore)
+# Copia questo file nella tua cartella "Downloads" e rinominalo in ".organizerignore".
+# I pattern sono case-insensitive e supportano le wildcard '*' e '?'.
+
+# Escludi file temporanei o parziali di download dei browser
+*.tmp
+*.crdownload
+*.part
+
+# Escludi file e cartelle di sistema
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# Escludi intere directory di sviluppo (il suffisso '/' indica una directory)
+node_modules/
+.git/
+dist/
+build/
+.next/
+bin/
+obj/
+
+# Escludi file specifici o pattern personalizzati
+bozza_*
+*.backup
+segreto.txt
