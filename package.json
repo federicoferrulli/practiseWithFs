@@ -4,8 +4,7 @@
   "description": "File Organizer - Organizzazione intelligente, sicura e multimodale di file e directory.",
   "main": "scheduleFiles.js",
   "bin": {
-    "organizer": "./scheduleFiles.js",
-    "antigravity-organizer": "./scheduleFiles.js"
+    "organizer": "./scheduleFiles.js"
   },
   "scripts": {
     "start": "node scheduleFiles.js",
